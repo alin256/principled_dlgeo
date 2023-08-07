@@ -1,0 +1,262 @@
+---
+title: "Flumy Alpha Reservoir"
+author: "Fabien ORS & Nicolas Desassis"
+date: "2021, February 10th"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r Loading Library, include=FALSE}
+library(RGeostats)
+library(RFlumy)
+```
+
+```{r Global setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.align="center")
+rm(list=ls())
+```
+
+# Flumy facies colorscale
+
+```{r Flumy facies colors}
+# Color of facies with RGB components
+col.flumy = rbind(
+  #0 Undefined (UDF)
+  c(0.60,0.60,0.90),
+  #1  Channel Lag (CL)
+  c(1.00,0.50,0.00),
+  #2  Point Bar / LAPs (PB)
+  c(1.00,1.00,0.00),
+  #3  Sand Plug (SP)
+  c(0.75, 0.75,0.55),
+  #4  Crevasse Splay I (CSI)
+  c(0.80, 0.50, 0.20),
+  #5  Splay II Channels (CCh)
+  c(0.80, 1.00, 0.20),
+  #6  Crevasse Splay II (CSII)
+  c(0.80, 0.80, 0.20),
+  #7  Levee (LV)
+  c(0.40, 0.80, 0.20),
+  #8  Overbank (OB)
+  c(0.00, 1.00, 0.00),
+  #9  Mud Plug (MP)
+  c(0.00, 0.80, 0.50),
+  #10 Channel Fill (CF)
+  c(0.50, 0.50, 0.50),
+  #11 Wetland (WL)
+  c(0.85, 0.45, 0.85),
+  #12 Draping (DR)
+  c(0.60, 0.80, 0.90),
+  #13 Pelagic (PL)
+  c(1.00, 0.80, 1.00))
+  
+# Convert into hexadecimal colorscale
+col.flumy = rgb(matrix(as.integer(col.flumy*256),length(col.flumy)/3,3), maxColorValue = 256)
+```
+
+# Two functions
+
+```{r Two functions for printing parameters and performing one simulation}
+print.params <- function()
+{
+  cat("Flumy parameters:\n")
+  cat("DOMAIN_NX =",       F.get("DOMAIN_NX"),"\n")
+  cat("DOMAIN_NY =",       F.get("DOMAIN_NY"),"\n")
+  cat("DOMAIN_DX =",       F.get("DOMAIN_DX"),"\n")
+  cat("DOMAIN_DY =",       F.get("DOMAIN_DY"),"\n")
+  cat("DOMAIN_SLOPE =",    F.get("DOMAIN_SLOPE"),"\n")
+  cat("EROD_COEF =",       F.get("EROD_COEF"),"\n")
+  cat("CHNL_WIDTH =",      F.get("CHNL_WIDTH"),"\n")
+  cat("CHNL_WAVELENGTH =", F.get("CHNL_WAVELENGTH"),"\n")
+  cat("CHNL_FLW_DIR =",    F.get("CHNL_FLW_DIR"),"\n")
+  cat("AV_REG_FREQ =",     F.get("AV_REG_FREQ"),"\n")
+  cat("AV_REG_POISSON =",  F.get("AV_REG_POISSON"),"\n")
+  cat("AV_LOC_FREQ =",     F.get("AV_LOC_FREQ"),"\n")
+  cat("AG_OB_FREQ =",      F.get("AG_OB_FREQ"),"\n")
+  cat("AG_OB_POISSON =",   F.get("AG_OB_POISSON"),"\n")
+  cat("AG_OB_DIST =",      F.get("AG_OB_DIST"),"\n")
+  cat("AG_OB_CONST =",     F.get("AG_OB_CONST"),"\n")
+  cat("AG_LV_WIDTH =",     F.get("AG_LV_WIDTH"),"\n")
+  cat("AG_EXP_DEC_THICK =",F.get("AG_EXP_DEC_THICK"),"\n")
+}
+
+perform.simu <- function(seed, zul, debug, keepid=T)
+{
+  fgrid = tryCatch(
+    F.sequence(fgridinit, niter=-1, zul=zul, flag.erase=T, verbose=(debug>0),
+               flag.debug=debug, flag.avulse=T, seed=seed),
+    error = function(e) {
+      cat("Catching error:", e$message, "\n")
+      return(NULL)
+    }
+  )
+  
+  if (!is.null(fgrid))
+  {
+    fgrid = db.sel(fgrid, x3 < fgrid$nx[3]*fgrid$dx[3]/2) # Mask the top of the grid
+    fgrid = db.reduce(fgrid, flag.keep.grid=T) # Crop the top of the grid to obtain a full block 
+    
+    fac4 = fgrid[,5] # Get simulated Flumy facies (6 facies simulated)
+    table(fac4)
+
+                        # Keep Channel Lag as 1 (Orange)
+    fac4[fac4==3]  = 2  # Merge Sand Plug (3) into Point Bar (2) (Yellow)
+    fac4[fac4==10] = 2  # Merge Channel Fill (10) into Point Bar (2) (Yellow)
+    if (!keepid)
+    {
+      fac4[fac4==7]  = 3  # Replace Levee (7) by 3 (Dark green)
+      fac4[fac4==8]  = 4  # Replace Overbank (8) by 4 (Light green)
+    }
+    table(fac4)
+    
+    if (sum(is.na(fac4)) > 0 || sum(is.nan(fac4)) > 0)
+    {
+      cat("NA values in fac4!\n")
+      browser()
+      return(NULL)
+    }
+    
+    fgrid = db.add(fgrid,fac4=fac4)
+  }
+  fgrid
+}
+```
+
+# Flumy example simulation
+
+```{r Flumy example simulation}
+nx = 128
+ny = 64
+dx = dy = 50
+nz = 128 # The height of the grid will be half reduced (to remove channel footprint and NA deposits) 
+dz = 0.5
+hmax = 10
+zul = nz*dz/2+hmax # Fill half of the grid plus one channel thickness
+
+
+fgridinit = db.create(nx=c(nx,ny,nz),dx=c(dx,dy,dz))   # Straight canyon of 3.2km width filled up to 32m
+F.type(mode=1) # Turbidites standard
+F.set("DOMAIN_NX", nx)
+F.set("DOMAIN_NY", ny)
+F.set("DOMAIN_DX", dx)
+F.set("DOMAIN_DY", dy)
+F.nexus(max.depth=hmax) # Default parameters for a channel of 10m maximum depth
+
+# Override default Nexus generated parameter
+F.set("DOMAIN_SLOPE", 0.001) # Normal slope for Standard Turbidites scenario (ENI uses 0.001)
+F.set("EROD_COEF", 1e-8) # Small erodibility for reducing migration (ENI uses 4e-8) => to mimick ENI straight centerline imports
+F.set("CHNL_WIDTH", 350) # Constant channel width (ENI uses 350m which is big for a turbidite of hmax=10m)
+F.set("CHNL_WAVELENGTH", 4000) # Channel stabilized wavelength (ENI uses 4000m which is big for a turbidite of hmax=10m)
+F.set("CHNL_FLW_DIR", 90) # Flow direction along Ox axis
+F.set("CHNL_MARGIN", 2) # Margin size (ENI uses 2*350 = 700m which is normal for the given domain)
+F.set("AV_REG_FREQ", 2) # Poisson period for regional avulsions to mimick ENI centerline imports
+F.set("AV_REG_POISSON", 110) # Regional avulsion every 110 iterations (in average) to mimick ENI centerline imports
+F.set("AV_LOC_FREQ", 0) # No local avulsion (no levee breach and no splay in the domain like ENI)
+F.set("AG_OB_FREQ", 2) # Poisson period for overbank events (ENI uses several constant periods = {20, 30, 40, 50, 100, 200})
+F.set("AG_OB_POISSON", 140) # Overbank period every 140 iterations (in average) to mimick ENI different choices
+F.set("AG_OB_DIST", 0) # Overbank constant distribution (no randomness exactly like ENI)
+F.set("AG_OB_CONST", 1) # Overbank intensity of 1m (ENI uses 2m which is big for such channel)
+F.set("AG_LV_WIDTH", 0.4) # Levee width (ENI uses 0.4*350m = 140m which is very small for such channel)
+F.set("AG_EXP_DEC_THICK", 928) # Overbank thickness exponential decrease (ENI uses 928m which is small for such channel)
+print.params()
+
+start_time <- Sys.time()
+fgrid = perform.simu(seed=165426111, zul=zul, debug=4, keepid=T)
+end_time <- Sys.time()
+elapse = end_time - start_time
+elapse
+```
+
+# Display slices and vertical cross-sections
+
+```{r Display sections}
+# Horizontal slices
+sz = seq(1,fgrid$nx[3],by=10)
+lapply(sz, function(iz) {
+    plot(fgrid, asp=0, col=col.flumy, title=paste0("Slice #",iz),
+         zlim=c(0,13), ref=c(0,0,iz))
+  })
+
+# Vertical vertical cross-sections
+sx = seq(1,fgrid$nx[1],by=10)
+lapply(sx, function(ix) {
+    plot(fgrid, asp=0, col=col.flumy, title=paste0("Y-Section #",ix), zlim=c(0,13), pos.x=2, pos.y=3, ref=c(ix,0,0))
+  })
+
+# First vertical cross-sections
+# Warning : Do not use 10 first vertical sections (too much sand) 
+sx = seq(1,10)
+lapply(sx, function(ix) {
+    plot(fgrid, asp=0, col=col.flumy, title=paste0("Y-Section #",ix), zlim=c(0,13), pos.x=2, pos.y=3, ref=c(ix,0,0))
+  })
+```
+
+# Extract a lot of vertical cross-sections and horizontal slices and store them in a CSV files
+
+```{r Extract a lot of sections, echo = F}
+{ # Open brace for making browser() instruction to work :
+  # https://stackoverflow.com/questions/37406005/rstudio-next-line-command-in-browser-does-not-work
+  set.seed(13234)
+  seeds = sample(100000)
+  nbsim = 150 # Number of simulations
+  #nbsim = 5 # Number of simulations
+  nbimg = 3000 # Must be a multiple of nbsim
+  #nbimg = 10 # Must be a multiple of nbsim
+  nim = nbimg/nbsim # Number of images extracted per simulation
+  rimv = fgrid$nx[1] / nim # Vertical sections number ratio should be > 5
+  rimh = fgrid$nx[3] / nim # Horizontal sections number ratio should be > 3
+  
+  # Results
+  cat("Forecast time is around: ", round(elapse*nbsim/60), " mins\n", sep="")
+  start_time <- Sys.time()
+  resv = matrix(NA, nrow=fgrid$nx[2]*fgrid$nx[3], ncol=nbimg)
+  resh = matrix(NA, nrow=fgrid$nx[1]*fgrid$nx[2], ncol=nbimg)
+  
+  # Perform nbsim simulations and extract nim sections per simulation
+  is = 1
+  i = 1
+  while(is <= nbsim)
+  {
+    cat("Performing simu #", is, "... ", sep="")
+    stime <- Sys.time()
+    fgrid = perform.simu(seed=seeds[i], zul=zul, debug=0, keepid=F)
+    etime <- Sys.time()
+    el = etime - stime
+    
+    # If simulation is successful
+    if (!is.null(fgrid))
+    {
+      # Compute vertical sections (ignore 10 first)
+      ix = round(seq(10, fgrid$nx[1]-1, length.out=nim))
+      for(j in 1:nim)
+      {
+        # Store one section per column
+        resv[,(is-1)*nim+j] = fgrid[fgrid[,2]==ix[j]*fgrid$dx[1],"fac4"]
+      }
+      
+      # Compute horizontal sections
+      iz = round(seq(1, fgrid$nx[3]-1, length.out=nim))
+      for(j in 1:nim)
+      {
+        # Store one section per column
+        resh[,(is-1)*nim+j] = fgrid[fgrid[,4]==iz[j]*fgrid$dx[3],"fac4"]
+      }
+      is = is + 1
+      cat("=> OK [", el, " secs]\n", sep="")
+    }
+    else
+    {
+      cat("=> NOK !!\n", sep="")
+    }
+    i = i + 1
+  }
+  
+  end_time <- Sys.time()
+  cat("Total elapse time: ", (end_time - start_time)/60, " mins\n", sep="")
+  
+  # Writing CSV files
+  write.csv(resv,file = "dataFlumyVert.csv",row.names=F)
+  write.csv(resh,file = "dataFlumyHoriz.csv",row.names=F)
+}
+```
