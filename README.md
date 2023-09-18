@@ -2,7 +2,7 @@
 ![Python 3.6](https://img.shields.io/badge/python-3.8-green.svg)
 ![Tensorflow 2.9](https://img.shields.io/badge/tensorflow-2.9-orange)
 
-# A principled deep adversarial learning approach for geological facies generation
+# A stable deep adversarial learning approach for geological facies generation
 
 ArXiv : https://arxiv.org/abs/2305.13318
 
